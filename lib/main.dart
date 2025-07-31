@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart'as http;
 
 void main() {
   runApp(const MyApp());
@@ -55,6 +60,165 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
+  String _currentTime='';
+  Timer? _timer;
+  Position? _currentPosition;
+  String _locationMessage= "正在獲取位置...";
+  String _cityInfo = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _updateTime(); // 初始化時先取得一次時間
+    _getLocationAndAdminAreaOSM(); //
+    // 設定一個每秒觸發一次的計時器來更新時間
+    _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) => _updateTime());
+  }
+
+  Future<void> _getLocationAndAdminAreaOSM() async {
+    setState(() {
+      _locationMessage = "正在獲取位置權限與座標...";
+      _cityInfo = ""; // 重置城市資訊
+    });
+
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // 1. 檢查位置服務是否啟用 (與之前相同)
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() { _locationMessage = '位置服務已禁用。'; });
+      return;
+    }
+
+    // 2. 檢查並請求位置權限 (與之前相同)
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() { _locationMessage = '位置權限被拒絕。'; });
+        return;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      setState(() { _locationMessage = '位置權限被永久拒絕。'; });
+      return;
+    }
+
+    // 3. 獲取目前位置 (經緯度)
+    setState(() { _locationMessage = "正在獲取經緯度..."; });
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium);
+      setState(() {
+        _currentPosition = position;
+        _locationMessage = '緯度: ${position.latitude.toStringAsFixed(4)}, 經度: ${position.longitude.toStringAsFixed(4)}';
+      });
+
+      // 4. 使用 OSM Nominatim 進行反向地理編碼
+      setState(() { _locationMessage += "\n正在透過 OSM 轉換為地名..."; });
+
+      final adminAreaData = await getAdminAreaFromCoordinatesOSM(position.latitude, position.longitude);
+
+      if (adminAreaData != null && adminAreaData['administrativeArea'] != null && adminAreaData['administrativeArea']!.isNotEmpty) {
+        String adminArea = adminAreaData['administrativeArea']!;
+        String locality = adminAreaData['locality'] ?? "";
+        setState(() {
+          _cityInfo = "$adminArea $locality".trim();
+          _locationMessage = "目前位置 (OSM): $_cityInfo";
+        });
+      } else {
+        setState(() {
+          _cityInfo = "無法從 OSM 獲取地名";
+          _locationMessage += "\n無法透過 OSM 將座標轉換為地名。";
+        });
+      }
+
+    } catch (e) {
+      print("獲取經緯度或 OSM 地名時發生錯誤: $e");
+      setState(() {
+        _locationMessage = '處理位置資訊時出錯: $e';
+      });
+    }
+  }
+
+  Future<Map<String, String>?> getAdminAreaFromCoordinatesOSM(double lat, double lon) async {
+    // Nominatim API 端點
+    // zoom=10 大約是城市級別，您可以調整或移除 zoom 參數以獲得不同詳細程度
+    // addressdetails=1 可以獲取更詳細的地址組件
+    final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon&accept-language=zh-TW&addressdetails=1&zoom=10');
+
+    print('正在請求 Nominatim API: $url'); // 打印請求的 URL 方便調試
+
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          // Nominatim 要求提供有效的 User-Agent，通常是您的應用程式名稱或一個描述
+          // 雖然不總是嚴格執行，但最好加上
+          'User-Agent': 'YourAppName/1.0 (your.app.bundle.id; your@email.com)',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        print('Nominatim API 回應: $data'); // 打印完整回應方便調試
+
+        if (data != null && data['address'] != null) {
+          final address = data['address'];
+          String city = address['city'] ??
+              address['state'] ?? // 有些地區 'state' 可能更接近縣市
+              address['county'] ?? // 縣
+              '';
+          String district = address['suburb'] ?? // 郊區/更細的區域
+              address['town'] ??
+              address['village'] ??
+              '';
+
+          // 針對台灣，'state' 或 'county' 可能是直轄市/縣市
+          // 'city' 在 Nominatim 中對於台灣可能指較大的市區，或有時是 'county' 的一部分
+          // 您需要根據實際返回的 address 組件來調整提取邏輯
+          // 例如，如果 'state' 是 "臺灣省"，那您可能需要看 'county' 或 'city'
+          // 如果 'state' 直接是 "臺北市"，那它就是您要的
+
+          // 為了簡化，我們先嘗試組合常見的欄位
+          String administrativeArea = address['state'] ?? address['county'] ?? address['city'] ?? '未知地區';
+          String localityInfo = address['city'] ?? address['town'] ?? address['suburb'] ?? ''; // 更細一級，如果有的話
+
+          print('OSM 提取 - 行政區: $administrativeArea, 地區: $localityInfo');
+          return {'administrativeArea': administrativeArea, 'locality': localityInfo};
+        } else {
+          print('Nominatim API 錯誤: 回應中沒有 address 資訊或 data 為 null');
+          return null;
+        }
+      } else {
+        print('Nominatim API HTTP 錯誤: ${response.statusCode}');
+        print('Nominatim API 錯誤內容: ${response.body}');
+        return null;
+      }
+    } catch (e, stackTrace) {
+      print('呼叫 Nominatim API 時發生錯誤: $e');
+      print('堆疊追蹤: $stackTrace');
+      return null;
+    }
+  }
+
+  void _updateTime() {
+    // 獲取當前時間並使用 intl 套件格式化為 HH:mm:ss (24小時制)
+    final String formattedTime = DateFormat('HH:mm:ss').format(DateTime.now());
+    if (mounted) { // 檢查 widget 是否還在 widget tree 中
+      setState(() {
+        _currentTime = formattedTime;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel(); // 當 widget 被移除時，取消計時器
+    super.dispose();
+  }
 
   void _incrementCounter() {
     setState(() {
@@ -69,45 +233,47 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: Column( // 使用 Column 來垂直排列標題和時間
+          crossAxisAlignment: CrossAxisAlignment.start, // 讓文字靠左對齊
+          children: [
+            Text(widget.title),
+            Text(
+              _currentTime, // 顯示目前時間
+              style: const TextStyle(fontSize: 16.0), // 您可以自訂時間的樣式
+            ),
+          ],
+        ),
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
             const Text('按「+」鈕次數:'),
             Text(
               '$_counter',
               style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 20),
+            Text(_locationMessage),
+            if (_currentPosition != null)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  children: [
+                    Text('經度: ${_currentPosition!.longitude}'),
+                    Text('緯度: ${_currentPosition!.latitude}'),
+                    Text('精確度: ${_currentPosition!.accuracy} 米'),
+                    Text('時間戳: ${_currentPosition!.timestamp!.toString()}'),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _getLocationAndAdminAreaOSM, // 添加一個按鈕手動觸發位置更新
+              child: const Text('重新獲取位置'),
             ),
           ],
         ),
@@ -116,7 +282,7 @@ class _MyHomePageState extends State<MyHomePage> {
         onPressed: _incrementCounter,
         tooltip: 'Increment',
         child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+      ),
     );
   }
 }
