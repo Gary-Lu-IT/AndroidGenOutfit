@@ -123,8 +123,9 @@ class _MyHomePageState extends State<MyHomePage> {
       if (adminAreaData != null && adminAreaData['administrativeArea'] != null && adminAreaData['administrativeArea']!.isNotEmpty) {
         String adminArea = adminAreaData['administrativeArea']!;
         String locality = adminAreaData['locality'] ?? "";
+        String sublocality = adminAreaData['sublocality'] ?? "";
         setState(() {
-          _cityInfo = "$adminArea $locality".trim();
+          _cityInfo = "$adminArea $locality $sublocality".trim();
           _locationMessage = "目前位置 (OSM): $_cityInfo";
         });
       } else {
@@ -185,9 +186,10 @@ class _MyHomePageState extends State<MyHomePage> {
           // 為了簡化，我們先嘗試組合常見的欄位
           String administrativeArea = address['state'] ?? address['county'] ?? address['city'] ?? '未知地區';
           String localityInfo = address['city'] ?? address['town'] ?? address['suburb'] ?? ''; // 更細一級，如果有的話
+          String sublocalityInfo = address['town'] ?? ''; // 最細一級，如果有的話
 
           print('OSM 提取 - 行政區: $administrativeArea, 地區: $localityInfo');
-          return {'administrativeArea': administrativeArea, 'locality': localityInfo};
+          return {'administrativeArea': administrativeArea, 'locality': localityInfo,'sublocality':sublocalityInfo};
         } else {
           print('Nominatim API 錯誤: 回應中沒有 address 資訊或 data 為 null');
           return null;
@@ -206,7 +208,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _updateTime() {
     // 獲取當前時間並使用 intl 套件格式化為 HH:mm:ss (24小時制)
-    final String formattedTime = DateFormat('HH:mm:ss').format(DateTime.now());
+    final String formattedTime = DateFormat('yyyy/MM/dd HH:mm:ss').format(DateTime.now());
     if (mounted) { // 檢查 widget 是否還在 widget tree 中
       setState(() {
         _currentTime = formattedTime;
@@ -266,7 +268,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     Text('經度: ${_currentPosition!.longitude}'),
                     Text('緯度: ${_currentPosition!.latitude}'),
                     Text('精確度: ${_currentPosition!.accuracy} 米'),
-                    Text('時間戳: ${_currentPosition!.timestamp!.toString()}'),
+                    //Text('時間戳: ${_currentPosition!.timestamp!.toString()}'),
                   ],
                 ),
               ),
