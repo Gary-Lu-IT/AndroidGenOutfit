@@ -6,7 +6,177 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart'as http;
 
 void main() {
-  runApp(const MyApp());
+  //runApp(const MyApp());
+  runApp( OutfitSimulatorApp());
+}
+
+class OutfitSimulator extends StatefulWidget {
+  @override
+  _OutfitSimulatorState createState() => _OutfitSimulatorState();
+}
+
+class _OutfitSimulatorState extends State<OutfitSimulator> {
+  // 預設選擇的衣物圖片路徑
+  String _selectedShirt = 'assets/shirts/shirt0001.png'; // 預設上衣
+  String _selectedPants = 'assets/pants/pants0001.png'; // 預設褲子
+
+  // 假設您有一個上衣圖片列表 (實際路徑)
+  final List<String> _shirtOptions = [
+    'assets/shirts/shirt0001.png',
+    'assets/shirts/shirt0002.png',
+    // 添加更多上衣圖片路徑
+  ];
+
+  // 假設您有一個褲子圖片列表 (實際路徑)
+  final List<String> _pantsOptions = [
+    'assets/pants/pants0001.png'
+    // 添加更多褲子圖片路徑
+  ];
+
+  // 假設您有對應的縮圖路徑 (可選，用於選擇器)
+  final List<String> _shirtThumbnails = [
+    'assets/shirts/shirt0001.png', // 如果沒有縮圖，可以直接用原圖路徑
+    'assets/shirts/shirt0002.png',
+  ];
+
+  final List<String> _pantsThumbnails = [
+    'assets/pants/pants0001.png',
+  ];
+
+
+  void _selectShirt(String shirtAssetPath) {
+    setState(() {
+      _selectedShirt = shirtAssetPath;
+    });
+  }
+
+  void _selectPants(String pantsAssetPath) {
+    setState(() {
+      _selectedPants = pantsAssetPath;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('穿搭模擬器'),
+      ),
+      body: Center(
+        child: Stack(
+          alignment: Alignment.center, // 確保圖片居中對齊
+          children: <Widget>[
+            // 底層：人物全身圖
+            Image.asset(
+              'assets/person/person_fg.png',
+              fit: BoxFit.contain, // 根據需要調整 fit 屬性
+            ),
+            // 中間層：選擇的上衣
+            // 使用 Positioned 可以更精確地控制上衣的位置和大小
+            // 您可能需要根據您的圖片資源調整 Positioned 的參數
+            Positioned.fill( // Positioned.fill 會讓圖片填滿 Stack
+              child: Image.asset(
+                _selectedShirt,
+                fit: BoxFit.contain, // 或 BoxFit.cover, BoxFit.fitWidth 等，取決於您的圖片
+              ),
+            ),
+            // 上層：選擇的褲子
+            // 同樣，使用 Positioned 控制褲子的位置和大小
+            Positioned.fill(
+              child: Image.asset(
+                _selectedPants,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ],
+        ),
+      ),
+      // 底部或其他地方放置選擇衣服和褲子的 UI
+      bottomNavigationBar: BottomNavigationBar(
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.checkroom), // 更適合衣物的圖示
+            label: '選擇上衣',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dry_cleaning), // 更適合褲子的圖示 (或其他)
+            label: '選擇褲子',
+          ),
+        ],
+        currentIndex: 0, // 可以根據需要設定預設選中的項目
+        onTap: (index) {
+          if (index == 0) {
+            _showClothingSelectionDialog(context, '上衣', _shirtOptions, _shirtThumbnails, _selectShirt);
+          } else if (index == 1) {
+            _showClothingSelectionDialog(context, '褲子', _pantsOptions, _pantsThumbnails, _selectPants);
+          }
+        },
+      ),
+    );
+  }
+
+  // 通用的衣物選擇彈窗
+  void _showClothingSelectionDialog(
+      BuildContext context,
+      String title,
+      List<String> clothingItems,
+      List<String> thumbnails, // 縮圖列表
+      Function(String) onSelect) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('選擇$title'),
+          content: SingleChildScrollView(
+            child: Wrap( // 使用 Wrap 讓選項可以自動換行
+              spacing: 8.0, // 水平間距
+              runSpacing: 8.0, // 垂直間距
+              children: List<Widget>.generate(clothingItems.length, (index) {
+                // 優先使用縮圖，如果縮圖列表不夠長或為空，則使用原圖
+                String displayImage = (thumbnails.isNotEmpty && index < thumbnails.length)
+                    ? thumbnails[index]
+                    : clothingItems[index];
+                return GestureDetector(
+                  onTap: () {
+                    onSelect(clothingItems[index]); // 選擇時使用原始圖片路徑
+                    Navigator.of(context).pop(); // 選擇後關閉彈窗
+                  },
+                  child: Image.asset(
+                    displayImage, // 顯示縮圖或原圖
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.cover, // 縮圖通常用 cover 比較好看
+                  ),
+                );
+              }),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('關閉'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// 如果想直接運行 OutfitSimulator，可以建立一個簡單的 App 包裝它
+class OutfitSimulatorApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '穿搭模擬器',
+      theme: ThemeData(
+        primarySwatch: Colors.blue, // 您可以自訂主題
+      ),
+      home: OutfitSimulator(),
+    );
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -208,7 +378,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _updateTime() {
     // 獲取當前時間並使用 intl 套件格式化為 HH:mm:ss (24小時制)
-    final String formattedTime = DateFormat('yyyy/MM/dd HH:mm:ss').format(DateTime.now());
+    final String formattedTime = DateFormat('yyyy年M月d日 HH:mm:ss').format(DateTime.now());
     if (mounted) { // 檢查 widget 是否還在 widget tree 中
       setState(() {
         _currentTime = formattedTime;
