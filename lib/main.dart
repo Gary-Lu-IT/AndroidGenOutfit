@@ -1,13 +1,102 @@
 import 'dart:async';
 import 'dart:convert';
+//import 'dart:nativewrappers/_internal/vm/lib/typed_data_patch.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:flutter/services.dart';
+//import 'package:intl/intl.dart';
+//import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart'as http;
-
+import 'AnalyzedImage.dart';
+import 'Azure_API.dart';
 void main() {
   //runApp(const MyApp());
   runApp( OutfitSimulatorApp());
+}
+
+Future<Map<String, dynamic>?> analyzeImageFromAsset(String assetPath) async {
+  final String endpoint = Azure_API.CVUrlAPI; // 替換為您的 Endpoint
+  final String apiKey = Azure_API.CVUrlKey;       // 替換為您的 Key
+
+  // 根據您使用的 API 版本調整 URL 和參數
+  // 示例使用 v3.2
+  final String apiUrl = "$endpoint/vision/v3.2/analyze?visualFeatures=Objects,Tags&language=en";
+  // 或者 Image Analysis 4.0 (preview)
+  // final String apiUrl = "$endpoint/computervision/imageanalysis:analyze?api-version=2023-02-01-preview&features=objects,tags&language=en";
+
+
+  try {
+    // 從 assets 讀取圖片數據
+    final ByteData imageData = await rootBundle.load(assetPath);
+    final List<int> bytes = imageData.buffer.asUint8List();
+
+    final response = await http.post(
+      Uri.parse(apiUrl),
+      headers: {
+        'Ocp-Apim-Subscription-Key': apiKey,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: bytes,
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      print('Azure AI Vision API Error: ${response.statusCode}');
+      print('Response: ${response.body}');
+      return null;
+    }
+  } catch (e) {
+    print('Error calling Azure AI Vision API: $e');
+    return null;
+  }
+}
+
+// 如何使用：
+void processImages() async {
+  List<String> imagePaths = [
+    'assets/person/person_fg2.png',
+    'assets/shirts/shirt0001.png',
+    'assets/pants/pants0001.png',
+  ];
+
+  for (String path in imagePaths) {
+    print("Analyzing: $path");
+    Map<String, dynamic>? analysisResult = await analyzeImageFromAsset(path);
+
+    if (analysisResult != null) {
+      // 解析 analysisResult 來獲取物件邊界框和標籤
+      // 例如，獲取物件：
+      if (analysisResult['objects'] != null) {
+        List<dynamic> objects = analysisResult['objects'] as List<dynamic>;
+        for (var obj in objects) {
+          String objectName = obj['object'] as String;
+          Map<String, dynamic> rectangle = obj['rectangle'] as Map<String, dynamic>;
+          double x = (rectangle['x'] as num).toDouble();
+          double y = (rectangle['y'] as num).toDouble();
+          double w = (rectangle['w'] as num).toDouble();
+          double h = (rectangle['h'] as num).toDouble();
+          double confidence = (obj['confidence'] as num).toDouble();
+
+          print('  Detected: $objectName at [$x, $y, $w, $h] with confidence $confidence');
+
+          // 根據 objectName 和 rectangle 計算您需要的錨點
+          // 例如，如果 objectName 是 "person" 或 "shirt"
+          double centerX = x + w / 2;
+          double centerY = y + h / 2;
+          print('    Center: ($centerX, $centerY)');
+          // ... 更多基於 rectangle 的推斷計算
+        }
+      }
+      // 獲取標籤
+      if (analysisResult['tags'] != null) {
+        List<dynamic> tags = analysisResult['tags'] as List<dynamic>;
+        for (var tag in tags) {
+          print('  Tag: ${tag['name']} (confidence: ${tag['confidence']})');
+        }
+      }
+    }
+    print("-" * 20);
+  }
 }
 
 class OutfitSimulator extends StatefulWidget {
@@ -16,136 +105,291 @@ class OutfitSimulator extends StatefulWidget {
 }
 
 class _OutfitSimulatorState extends State<OutfitSimulator> {
-  // 預設選擇的衣物圖片路徑
-  String _selectedShirt = 'assets/shirts/shirt0001.png'; // 預設上衣
-  String _selectedPants = 'assets/pants/pants0001.png'; // 預設褲子
+  // 預設人物模型 - 也需要分析
+  AnalyzedImage _personModel = AnalyzedImage('assets/person/person_fg.png'); // 您的預設人物圖路徑
 
-  // 假設您有一個上衣圖片列表 (實際路徑)
-  final List<String> _shirtOptions = [
-    'assets/shirts/shirt0001.png',
-    'assets/shirts/shirt0002.png',
+  // 預設選擇的衣物圖片路徑 - 現在是 AnalyzedImage 對象
+  AnalyzedImage? _selectedShirtModel;
+  AnalyzedImage? _selectedPantsModel;
+
+  // 衣物選項列表 - 現在是 List<AnalyzedImage>
+  final List<AnalyzedImage> _shirtOptions = [
+    AnalyzedImage('assets/shirts/shirt0001.png'),
+    AnalyzedImage('assets/shirts/shirt0002.png'),
     // 添加更多上衣圖片路徑
   ];
 
-  // 假設您有一個褲子圖片列表 (實際路徑)
-  final List<String> _pantsOptions = [
-    'assets/pants/pants0001.png'
+  final List<AnalyzedImage> _pantsOptions = [
+    AnalyzedImage('assets/pants/pants0001.png'),
     // 添加更多褲子圖片路徑
   ];
 
-  // 假設您有對應的縮圖路徑 (可選，用於選擇器)
-  final List<String> _shirtThumbnails = [
-    'assets/shirts/shirt0001.png', // 如果沒有縮圖，可以直接用原圖路徑
-    'assets/shirts/shirt0002.png',
-  ];
+  bool _isLoadingAnalysis = true; // 用於顯示加載指示器
 
-  final List<String> _pantsThumbnails = [
-    'assets/pants/pants0001.png',
-  ];
-
-
-  void _selectShirt(String shirtAssetPath) {
+  @override
+  void initState() {
+    super.initState();
+    _analyzeAllAssets();
+  }
+  Future<void> _analyzeAllAssets() async {
     setState(() {
-      _selectedShirt = shirtAssetPath;
+      _isLoadingAnalysis = true;
+    });
+
+    // 分析人物模型
+    Map<String, dynamic>? personAnalysis = await analyzeImageFromAsset(_personModel.assetPath);
+    _personModel.updateWithAnalysis(personAnalysis, objectType: "person");
+
+    // 分析所有上衣選項
+    for (var shirtModel in _shirtOptions) {
+      Map<String, dynamic>? shirtAnalysis = await analyzeImageFromAsset(shirtModel.assetPath);
+      shirtModel.updateWithAnalysis(shirtAnalysis, objectType: "shirt");
+    }
+    // 預設選中第一個已分析的上衣
+    if (_shirtOptions.isNotEmpty && _shirtOptions.first.boundingBox != null) {
+      _selectedShirtModel = _shirtOptions.first;
+    }
+
+
+    // 分析所有褲子選項
+    for (var pantsModel in _pantsOptions) {
+      Map<String, dynamic>? pantsAnalysis = await analyzeImageFromAsset(pantsModel.assetPath);
+      pantsModel.updateWithAnalysis(pantsAnalysis, objectType: "pants");
+    }
+    // 預設選中第一個已分析的褲子
+    if (_pantsOptions.isNotEmpty && _pantsOptions.first.boundingBox != null) {
+      _selectedPantsModel = _pantsOptions.first;
+    }
+
+
+    setState(() {
+      _isLoadingAnalysis = false;
     });
   }
 
-  void _selectPants(String pantsAssetPath) {
+  void _selectShirt(AnalyzedImage shirt) {
     setState(() {
-      _selectedPants = pantsAssetPath;
+      _selectedShirtModel = shirt;
+    });
+  }
+
+  void _selectPants(AnalyzedImage pants) {
+    setState(() {
+      _selectedPantsModel = pants;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingAnalysis) {
+      return Scaffold(
+        appBar: AppBar(title: Text('穿搭模擬器')),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // --- 動態計算位置和尺寸 ---
+    Positioned? shirtLayer;
+    Positioned? pantsLayer;
+
+    // 確保人物模型和其參考錨點已加載
+    if (_personModel.boundingBox != null &&
+        _personModel.personShoulderCenter != null &&
+        _personModel.personWaistCenter != null &&
+        _personModel.personReferenceWidth != null) {
+
+      final personCenterX = _personModel.personShoulderCenter!.dx; // 假設人物是居中的
+
+      // --- 上衣圖層計算 ---
+      if (_selectedShirtModel != null &&
+          _selectedShirtModel!.boundingBox != null &&
+          _selectedShirtModel!.clothingAnchor != null &&
+          _selectedShirtModel!.clothingReferenceWidth != null &&
+          _selectedShirtModel!.clothingOriginalHeight != null) {
+
+        final shirt = _selectedShirtModel!;
+        final personShoulderY = _personModel.personShoulderCenter!.dy;
+        final personRefWidth = _personModel.personReferenceWidth!;
+
+        // 1. 縮放比例 (基於人物參考寬度和上衣參考寬度)
+        //    確保 clothingReferenceWidth 不為0，避免除零錯誤
+        double scaleFactorShirt = (shirt.clothingReferenceWidth! > 0)
+            ? (personRefWidth * 0.8) / shirt.clothingReferenceWidth! // 0.8 作為微調比例，讓衣服比人物略窄一點
+            : 1.0;
+
+        // 2. 縮放後的上衣尺寸
+        double scaledShirtWidth = shirt.clothingReferenceWidth! * scaleFactorShirt;
+        double scaledShirtHeight = shirt.clothingOriginalHeight! * scaleFactorShirt;
+
+        // 3. 計算 Positioned 的 top 和 left
+        //    目標：將上衣的 clothingAnchor (例如領口中心) 對齊人物的 personShoulderCenter
+        //    shirt.clothingAnchor.x 是相對於其原始圖片左上角的
+        //    縮放後，這個錨點在縮放後圖片中的 X 座標也按比例變化 (shirt.clothingAnchor!.dx * scaleFactorShirt)
+        //    (scaledShirtWidth / 2) 是為了將衣物中心對齊人物中心
+        double shirtTop = personShoulderY - (shirt.clothingAnchor!.dy * scaleFactorShirt)
+            + 5; // 微調值：向上移動一點，您可以調整這個值
+        double shirtLeft = personCenterX - (scaledShirtWidth / 2)
+            - (shirt.clothingAnchor!.dx * scaleFactorShirt - shirt.clothingReferenceWidth!/2 * scaleFactorShirt) ; // 微調值：使衣物中心對齊
+
+
+        shirtLayer = Positioned(
+          top: shirtTop,
+          left: shirtLeft,
+          width: scaledShirtWidth,
+          height: scaledShirtHeight,
+          child: Image.asset(
+            shirt.assetPath,
+            fit: BoxFit.fill, // 因為我們計算了精確的縮放尺寸
+          ),
+        );
+        print("Shirt Layer: top=$shirtTop, left=$shirtLeft, width=$scaledShirtWidth, height=$scaledShirtHeight, path=${shirt.assetPath}");
+      }
+
+      // --- 褲子圖層計算 ---
+      if (_selectedPantsModel != null &&
+          _selectedPantsModel!.boundingBox != null &&
+          _selectedPantsModel!.clothingAnchor != null &&
+          _selectedPantsModel!.clothingReferenceWidth != null &&
+          _selectedPantsModel!.clothingOriginalHeight != null) {
+
+        final pants = _selectedPantsModel!;
+        final personWaistY = _personModel.personWaistCenter!.dy;
+        final personRefWidth = _personModel.personReferenceWidth!; // 可以用同一個或單獨的腰部參考寬度
+
+        double scaleFactorPants = (pants.clothingReferenceWidth! > 0)
+            ? (personRefWidth * 0.75) / pants.clothingReferenceWidth! // 0.75 作為微調
+            : 1.0;
+
+        double scaledPantsWidth = pants.clothingReferenceWidth! * scaleFactorPants;
+        double scaledPantsHeight = pants.clothingOriginalHeight! * scaleFactorPants;
+
+        double pantsTop = personWaistY - (pants.clothingAnchor!.dy * scaleFactorPants)
+            - 5; // 微調值：向下移動一點
+        double pantsLeft = personCenterX - (scaledPantsWidth / 2)
+            - (pants.clothingAnchor!.dx * scaleFactorPants - pants.clothingReferenceWidth!/2 * scaleFactorPants);
+
+
+        pantsLayer = Positioned(
+          top: pantsTop,
+          left: pantsLeft,
+          width: scaledPantsWidth,
+          height: scaledPantsHeight,
+          child: Image.asset(
+            pants.assetPath,
+            fit: BoxFit.fill,
+          ),
+        );
+        print("Pants Layer: top=$pantsTop, left=$pantsLeft, width=$scaledPantsWidth, height=$scaledPantsHeight, path=${pants.assetPath}");
+      }
+    } else {
+      print("Person model or its anchors are not yet loaded/analyzed.");
+    }
+
+
     return Scaffold(
       appBar: AppBar(
         title: Text('穿搭模擬器'),
       ),
       body: Center(
-        child: Stack(
-          alignment: Alignment.center, // 確保圖片居中對齊
-          children: <Widget>[
-            // 底層：人物全身圖
-            Image.asset(
-              'assets/person/person_fg.png',
-              fit: BoxFit.contain, // 根據需要調整 fit 屬性
-            ),
-            // 中間層：選擇的上衣
-            // 使用 Positioned 可以更精確地控制上衣的位置和大小
-            // 您可能需要根據您的圖片資源調整 Positioned 的參數
-            Positioned.fill( // Positioned.fill 會讓圖片填滿 Stack
-              child: Image.asset(
-                _selectedShirt,
-                fit: BoxFit.contain, // 或 BoxFit.cover, BoxFit.fitWidth 等，取決於您的圖片
+        child: Container( // 可以給 Stack 一個固定大小或讓它自適應
+          width: 300, // 示例：給一個固定寬度
+          height: 500, // 示例：給一個固定高度
+          decoration: BoxDecoration(border: Border.all(color: Colors.grey)), // 方便調試邊界
+          child: Stack(
+            alignment: Alignment.topCenter, // 可以嘗試不同的 alignment
+            children: <Widget>[
+              // 底層：人物全身圖 (讓它填滿容器)
+              Positioned.fill(
+                child: Image.asset(
+                  _personModel.assetPath,
+                  fit: BoxFit.contain,
+                ),
               ),
-            ),
-            // 上層：選擇的褲子
-            // 同樣，使用 Positioned 控制褲子的位置和大小
-            Positioned.fill(
-              child: Image.asset(
-                _selectedPants,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ],
+
+              // 中間層：選擇的上衣 (如果已計算)
+              if (shirtLayer != null) shirtLayer,
+
+              // 上層：選擇的褲子 (如果已計算)
+              if (pantsLayer != null) pantsLayer,
+            ],
+          ),
         ),
       ),
-      // 底部或其他地方放置選擇衣服和褲子的 UI
       bottomNavigationBar: BottomNavigationBar(
+        // ... (衣物選擇 UI，將傳遞 AnalyzedImage 而不是 String)
+        // 例如 onTap: (index) {
+        //   if (index == 0) {
+        //     _showClothingSelectionDialog(context, '上衣', _shirtOptions, _selectShirt);
+        //   } ...
+        // }
+        // (彈窗的實現也需要修改以處理 AnalyzedImage)
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.checkroom), // 更適合衣物的圖示
-            label: '選擇上衣',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dry_cleaning), // 更適合褲子的圖示 (或其他)
-            label: '選擇褲子',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.checkroom), label: '選擇上衣'),
+          BottomNavigationBarItem(icon: Icon(Icons.dry_cleaning), label: '選擇褲子'),
         ],
-        currentIndex: 0, // 可以根據需要設定預設選中的項目
+        currentIndex: 0,
         onTap: (index) {
           if (index == 0) {
-            _showClothingSelectionDialog(context, '上衣', _shirtOptions, _shirtThumbnails, _selectShirt);
+            _showClothingSelectionDialog(context, '上衣', _shirtOptions, (item){
+              _selectShirt(item); // item is AnalyzedImage
+            });
           } else if (index == 1) {
-            _showClothingSelectionDialog(context, '褲子', _pantsOptions, _pantsThumbnails, _selectPants);
+            _showClothingSelectionDialog(context, '褲子', _pantsOptions, (item){
+              _selectPants(item); // item is AnalyzedImage
+            });
           }
         },
       ),
     );
   }
 
-  // 通用的衣物選擇彈窗
+  // 修改後的衣物選擇彈窗
   void _showClothingSelectionDialog(
       BuildContext context,
       String title,
-      List<String> clothingItems,
-      List<String> thumbnails, // 縮圖列表
-      Function(String) onSelect) {
+      List<AnalyzedImage> clothingItems, // 改為 AnalyzedImage
+      Function(AnalyzedImage) onSelect) { // 回調參數改為 AnalyzedImage
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text('選擇$title'),
           content: SingleChildScrollView(
-            child: Wrap( // 使用 Wrap 讓選項可以自動換行
-              spacing: 8.0, // 水平間距
-              runSpacing: 8.0, // 垂直間距
+            child: Wrap(
+              spacing: 8.0,
+              runSpacing: 8.0,
               children: List<Widget>.generate(clothingItems.length, (index) {
-                // 優先使用縮圖，如果縮圖列表不夠長或為空，則使用原圖
-                String displayImage = (thumbnails.isNotEmpty && index < thumbnails.length)
-                    ? thumbnails[index]
-                    : clothingItems[index];
+                final item = clothingItems[index];
+                // 確保圖片在顯示前已經被分析，或者有一個預設的顯示方式
+                // 這裡我們直接用 assetPath，因為縮圖本身不參與複雜定位
                 return GestureDetector(
                   onTap: () {
-                    onSelect(clothingItems[index]); // 選擇時使用原始圖片路徑
-                    Navigator.of(context).pop(); // 選擇後關閉彈窗
+                    if (item.boundingBox == null) {
+                      // 可以提示用戶該圖片尚未分析完成或分析失敗
+                      print("Warning: ${item.assetPath} has not been analyzed or analysis failed.");
+                      // 或者在這裡觸發一次性分析
+                      // analyzeImageFromAsset(item.assetPath).then((result) {
+                      //   item.updateWithAnalysis(result, objectType: title == '上衣' ? 'shirt' : 'pants');
+                      //   if (item.boundingBox != null) onSelect(item);
+                      //   Navigator.of(context).pop();
+                      // });
+                      // return; // 阻止選擇未分析的
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('${item.assetPath} 正在分析中或分析失敗，請稍後重試。')),
+                      );
+                      return;
+                    }
+                    onSelect(item);
+                    Navigator.of(context).pop();
                   },
-                  child: Image.asset(
-                    displayImage, // 顯示縮圖或原圖
-                    width: 80,
-                    height: 80,
-                    fit: BoxFit.cover, // 縮圖通常用 cover 比較好看
+                  child: Opacity( // 如果未分析，可以降低透明度
+                    opacity: item.boundingBox != null ? 1.0 : 0.5,
+                    child: Image.asset(
+                      item.assetPath, // 彈窗中顯示原圖或縮圖
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 );
               }),
@@ -154,9 +398,7 @@ class _OutfitSimulatorState extends State<OutfitSimulator> {
           actions: <Widget>[
             TextButton(
               child: Text('關閉'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
             ),
           ],
         );
@@ -164,6 +406,7 @@ class _OutfitSimulatorState extends State<OutfitSimulator> {
     );
   }
 }
+
 
 // 如果想直接運行 OutfitSimulator，可以建立一個簡單的 App 包裝它
 class OutfitSimulatorApp extends StatelessWidget {
@@ -175,286 +418,6 @@ class OutfitSimulatorApp extends StatelessWidget {
         primarySwatch: Colors.blue, // 您可以自訂主題
       ),
       home: OutfitSimulator(),
-    );
-  }
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter 測試首頁'),
-    );
-  }
-}
-
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-  String _currentTime='';
-  Timer? _timer;
-  Position? _currentPosition;
-  String _locationMessage= "正在獲取位置...";
-  String _cityInfo = "";
-
-  @override
-  void initState() {
-    super.initState();
-    _updateTime(); // 初始化時先取得一次時間
-    _getLocationAndAdminAreaOSM(); //
-    // 設定一個每秒觸發一次的計時器來更新時間
-    _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) => _updateTime());
-  }
-
-  Future<void> _getLocationAndAdminAreaOSM() async {
-    setState(() {
-      _locationMessage = "正在獲取位置權限與座標...";
-      _cityInfo = ""; // 重置城市資訊
-    });
-
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // 1. 檢查位置服務是否啟用 (與之前相同)
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() { _locationMessage = '位置服務已禁用。'; });
-      return;
-    }
-
-    // 2. 檢查並請求位置權限 (與之前相同)
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() { _locationMessage = '位置權限被拒絕。'; });
-        return;
-      }
-    }
-    if (permission == LocationPermission.deniedForever) {
-      setState(() { _locationMessage = '位置權限被永久拒絕。'; });
-      return;
-    }
-
-    // 3. 獲取目前位置 (經緯度)
-    setState(() { _locationMessage = "正在獲取經緯度..."; });
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium);
-      setState(() {
-        _currentPosition = position;
-        _locationMessage = '緯度: ${position.latitude.toStringAsFixed(4)}, 經度: ${position.longitude.toStringAsFixed(4)}';
-      });
-
-      // 4. 使用 OSM Nominatim 進行反向地理編碼
-      setState(() { _locationMessage += "\n正在透過 OSM 轉換為地名..."; });
-
-      final adminAreaData = await getAdminAreaFromCoordinatesOSM(position.latitude, position.longitude);
-
-      if (adminAreaData != null && adminAreaData['administrativeArea'] != null && adminAreaData['administrativeArea']!.isNotEmpty) {
-        String adminArea = adminAreaData['administrativeArea']!;
-        String locality = adminAreaData['locality'] ?? "";
-        String sublocality = adminAreaData['sublocality'] ?? "";
-        setState(() {
-          _cityInfo = "$adminArea $locality $sublocality".trim();
-          _locationMessage = "目前位置 (OSM): $_cityInfo";
-        });
-      } else {
-        setState(() {
-          _cityInfo = "無法從 OSM 獲取地名";
-          _locationMessage += "\n無法透過 OSM 將座標轉換為地名。";
-        });
-      }
-
-    } catch (e) {
-      print("獲取經緯度或 OSM 地名時發生錯誤: $e");
-      setState(() {
-        _locationMessage = '處理位置資訊時出錯: $e';
-      });
-    }
-  }
-
-  Future<Map<String, String>?> getAdminAreaFromCoordinatesOSM(double lat, double lon) async {
-    // Nominatim API 端點
-    // zoom=10 大約是城市級別，您可以調整或移除 zoom 參數以獲得不同詳細程度
-    // addressdetails=1 可以獲取更詳細的地址組件
-    final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon&accept-language=zh-TW&addressdetails=1&zoom=10');
-
-    print('正在請求 Nominatim API: $url'); // 打印請求的 URL 方便調試
-
-    try {
-      final response = await http.get(
-        url,
-        headers: {
-          // Nominatim 要求提供有效的 User-Agent，通常是您的應用程式名稱或一個描述
-          // 雖然不總是嚴格執行，但最好加上
-          'User-Agent': 'YourAppName/1.0 (your.app.bundle.id; your@email.com)',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print('Nominatim API 回應: $data'); // 打印完整回應方便調試
-
-        if (data != null && data['address'] != null) {
-          final address = data['address'];
-          String city = address['city'] ??
-              address['state'] ?? // 有些地區 'state' 可能更接近縣市
-              address['county'] ?? // 縣
-              '';
-          String district = address['suburb'] ?? // 郊區/更細的區域
-              address['town'] ??
-              address['village'] ??
-              '';
-
-          // 針對台灣，'state' 或 'county' 可能是直轄市/縣市
-          // 'city' 在 Nominatim 中對於台灣可能指較大的市區，或有時是 'county' 的一部分
-          // 您需要根據實際返回的 address 組件來調整提取邏輯
-          // 例如，如果 'state' 是 "臺灣省"，那您可能需要看 'county' 或 'city'
-          // 如果 'state' 直接是 "臺北市"，那它就是您要的
-
-          // 為了簡化，我們先嘗試組合常見的欄位
-          String administrativeArea = address['state'] ?? address['county'] ?? address['city'] ?? '未知地區';
-          String localityInfo = address['city'] ?? address['town'] ?? address['suburb'] ?? ''; // 更細一級，如果有的話
-          String sublocalityInfo = address['town'] ?? ''; // 最細一級，如果有的話
-
-          print('OSM 提取 - 行政區: $administrativeArea, 地區: $localityInfo');
-          return {'administrativeArea': administrativeArea, 'locality': localityInfo,'sublocality':sublocalityInfo};
-        } else {
-          print('Nominatim API 錯誤: 回應中沒有 address 資訊或 data 為 null');
-          return null;
-        }
-      } else {
-        print('Nominatim API HTTP 錯誤: ${response.statusCode}');
-        print('Nominatim API 錯誤內容: ${response.body}');
-        return null;
-      }
-    } catch (e, stackTrace) {
-      print('呼叫 Nominatim API 時發生錯誤: $e');
-      print('堆疊追蹤: $stackTrace');
-      return null;
-    }
-  }
-
-  void _updateTime() {
-    // 獲取當前時間並使用 intl 套件格式化為 HH:mm:ss (24小時制)
-    final String formattedTime = DateFormat('yyyy年M月d日 HH:mm:ss').format(DateTime.now());
-    if (mounted) { // 檢查 widget 是否還在 widget tree 中
-      setState(() {
-        _currentTime = formattedTime;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel(); // 當 widget 被移除時，取消計時器
-    super.dispose();
-  }
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Column( // 使用 Column 來垂直排列標題和時間
-          crossAxisAlignment: CrossAxisAlignment.start, // 讓文字靠左對齊
-          children: [
-            Text(widget.title),
-            Text(
-              _currentTime, // 顯示目前時間
-              style: const TextStyle(fontSize: 16.0), // 您可以自訂時間的樣式
-            ),
-          ],
-        ),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('按「+」鈕次數:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 20),
-            Text(_locationMessage),
-            if (_currentPosition != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Column(
-                  children: [
-                    Text('經度: ${_currentPosition!.longitude}'),
-                    Text('緯度: ${_currentPosition!.latitude}'),
-                    Text('精確度: ${_currentPosition!.accuracy} 米'),
-                    //Text('時間戳: ${_currentPosition!.timestamp!.toString()}'),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _getLocationAndAdminAreaOSM, // 添加一個按鈕手動觸發位置更新
-              child: const Text('重新獲取位置'),
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
     );
   }
 }
