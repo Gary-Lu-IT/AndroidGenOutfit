@@ -41,12 +41,12 @@ Future<Map<String, dynamic>?> analyzeImageFromAsset(String assetPath) async {
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
-      print('Azure AI Vision API Error: ${response.statusCode}');
-      print('Response: ${response.body}');
+      debugPrint('Azure AI Vision API Error: ${response.statusCode}');
+      debugPrint('Response: ${response.body}');
       return null;
     }
   } catch (e) {
-    print('Error calling Azure AI Vision API: $e');
+    debugPrint('Error calling Azure AI Vision API: $e');
     return null;
   }
 }
@@ -60,7 +60,7 @@ void processImages() async {
   ];
 
   for (String path in imagePaths) {
-    print("Analyzing: $path");
+    debugPrint("Analyzing: $path");
     Map<String, dynamic>? analysisResult = await analyzeImageFromAsset(path);
 
     if (analysisResult != null) {
@@ -77,13 +77,13 @@ void processImages() async {
           double h = (rectangle['h'] as num).toDouble();
           double confidence = (obj['confidence'] as num).toDouble();
 
-          print('  Detected: $objectName at [$x, $y, $w, $h] with confidence $confidence');
+          debugPrint('  Detected: $objectName at [$x, $y, $w, $h] with confidence $confidence');
 
           // 根據 objectName 和 rectangle 計算您需要的錨點
           // 例如，如果 objectName 是 "person" 或 "shirt"
           double centerX = x + w / 2;
           double centerY = y + h / 2;
-          print('    Center: ($centerX, $centerY)');
+          debugPrint('    Center: ($centerX, $centerY)');
           // ... 更多基於 rectangle 的推斷計算
         }
       }
@@ -91,11 +91,11 @@ void processImages() async {
       if (analysisResult['tags'] != null) {
         List<dynamic> tags = analysisResult['tags'] as List<dynamic>;
         for (var tag in tags) {
-          print('  Tag: ${tag['name']} (confidence: ${tag['confidence']})');
+          debugPrint('  Tag: ${tag['name']} (confidence: ${tag['confidence']})');
         }
       }
     }
-    print("-" * 20);
+    debugPrint("-" * 20);
   }
 }
 
@@ -106,7 +106,7 @@ class OutfitSimulator extends StatefulWidget {
 
 class _OutfitSimulatorState extends State<OutfitSimulator> {
   // 預設人物模型 - 也需要分析
-  AnalyzedImage _personModel = AnalyzedImage('assets/person/person_fg.png'); // 您的預設人物圖路徑
+  final AnalyzedImage _personModel = AnalyzedImage('assets/person/person_fg.png'); // 您的預設人物圖路徑
 
   // 預設選擇的衣物圖片路徑 - 現在是 AnalyzedImage 對象
   AnalyzedImage? _selectedShirtModel;
@@ -242,7 +242,7 @@ class _OutfitSimulatorState extends State<OutfitSimulator> {
             fit: BoxFit.fill, // 因為我們計算了精確的縮放尺寸
           ),
         );
-        print("Shirt Layer: top=$shirtTop, left=$shirtLeft, width=$scaledShirtWidth, height=$scaledShirtHeight, path=${shirt.assetPath}");
+        debugPrint("Shirt Layer: top=$shirtTop, left=$shirtLeft, width=$scaledShirtWidth, height=$scaledShirtHeight, path=${shirt.assetPath}");
       }
 
       // --- 褲子圖層計算 ---
@@ -279,10 +279,10 @@ class _OutfitSimulatorState extends State<OutfitSimulator> {
             fit: BoxFit.fill,
           ),
         );
-        print("Pants Layer: top=$pantsTop, left=$pantsLeft, width=$scaledPantsWidth, height=$scaledPantsHeight, path=${pants.assetPath}");
+        debugPrint("Pants Layer: top=$pantsTop, left=$pantsLeft, width=$scaledPantsWidth, height=$scaledPantsHeight, path=${pants.assetPath}");
       }
     } else {
-      print("Person model or its anchors are not yet loaded/analyzed.");
+      debugPrint("Person model or its anchors are not yet loaded/analyzed.");
     }
 
 
@@ -366,7 +366,7 @@ class _OutfitSimulatorState extends State<OutfitSimulator> {
                   onTap: () {
                     if (item.boundingBox == null) {
                       // 可以提示用戶該圖片尚未分析完成或分析失敗
-                      print("Warning: ${item.assetPath} has not been analyzed or analysis failed.");
+                      debugPrint("Warning: ${item.assetPath} has not been analyzed or analysis failed.");
                       // 或者在這裡觸發一次性分析
                       // analyzeImageFromAsset(item.assetPath).then((result) {
                       //   item.updateWithAnalysis(result, objectType: title == '上衣' ? 'shirt' : 'pants');
