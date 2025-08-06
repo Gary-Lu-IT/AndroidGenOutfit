@@ -37,9 +37,12 @@ Future<Map<String, dynamic>?> analyzeImageFromAsset(String assetPath) async {
       },
       body: bytes,
     );
-
+    debugPrint("Input:${assetPath},Response:${response}");
     if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200) {
+        debugPrint('Azure API Success for $assetPath. Response Body: ${response.body}'); // <--- 關鍵打印
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
     } else {
       debugPrint('Azure AI Vision API Error: ${response.statusCode}');
       debugPrint('Response: ${response.body}');

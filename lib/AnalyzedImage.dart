@@ -17,6 +17,7 @@ class AnalyzedImage {
 
   // 方法：使用 Azure 分析結果更新此對象
   void updateWithAnalysis(Map<String, dynamic>? analysisResult, {String objectType = "person"}) {
+    objectType=objectType.toLowerCase();
     if (analysisResult == null || analysisResult['objects'] == null) return;
 
     List<dynamic> objects = analysisResult['objects'] as List<dynamic>;
@@ -27,7 +28,7 @@ class AnalyzedImage {
       String detectedObjectName = (obj['object'] as String).toLowerCase();
       if (detectedObjectName.contains(objectType.toLowerCase()) ||
           (objectType == "shirt" && (detectedObjectName.contains("shirt") || detectedObjectName.contains("top") || detectedObjectName.contains("clothing"))) ||
-          (objectType == "pants" && (detectedObjectName.contains("pants") || detectedObjectName.contains("trousers") || detectedObjectName.contains("clothing")))) {
+          (objectType == "pants" && (detectedObjectName.contains("pants") || detectedObjectName.contains("jeans") || detectedObjectName.contains("trousers") || detectedObjectName.contains("clothing")))) {
         targetObjectData = obj as Map<String, dynamic>;
         break; // 暫時取第一個匹配的
       }
